@@ -52,7 +52,7 @@ createApp({
       const idx = currentLyricIndex.value;
       if (idx < 0) return 0;
       const lineHeight = 44;
-      const containerHeight = 220;
+      const containerHeight = 420;
       const centerOffset = containerHeight / 2 - lineHeight / 2;
       return centerOffset - idx * lineHeight;
     });

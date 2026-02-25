@@ -53,20 +53,6 @@
 
       <!-- Right: Player -->
       <main class="player-panel">
-      <!-- Header & Cover -->
-      <div class="player-header">
-        <div class="cover-area" :class="{ playing: isPlaying }">
-          <img v-if="currentSong?.cover" :src="currentSong.cover" alt="封面" class="cover-img">
-          <div v-else class="cover-placeholder">
-            <span class="music-icon">♪</span>
-          </div>
-        </div>
-        <div class="song-info">
-          <h2 class="song-title">{{ currentSong?.name || '未选择歌曲' }}</h2>
-          <p class="song-artist">{{ currentSong?.artist || '' }}</p>
-        </div>
-      </div>
-
       <!-- Lyrics Area -->
       <div class="lyrics-container" ref="lyricsRef">
         <div class="lyrics-content" :style="{ transform: `translateY(${lyricsOffset}px)` }">
@@ -98,8 +84,8 @@
         <canvas ref="visualizerCanvas" class="visualizer-canvas"></canvas>
       </div>
 
-      <!-- Controls -->
-      <div class="controls">
+      <!-- Controls - Fixed at Bottom -->
+      <div class="controls controls-fixed">
         <button class="btn-icon" title="上一首" @click="prev">⏮</button>
         <button class="btn-icon btn-play" @click="togglePlay">
           {{ isPlaying ? '⏸' : '▶' }}
