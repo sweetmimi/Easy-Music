@@ -1,4 +1,45 @@
-const { createApp, ref, computed, watch, onMounted } = Vue;
+const { createApp, ref, computed, watch, nextTick, onMounted } = Vue;
+
+// ===== IndexedDB helpers =====
+const DB_NAME = 'easy-music-db';
+const DB_VERSION = 1;
+const STORE_SONGS = 'songs';
+const STORE_LYRICS = 'lyrics';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_SONGS)) {
+        db.createObjectStore(STORE_SONGS, { keyPath: 'baseName' });
+      }
+      if (!db.objectStoreNames.contains(STORE_LYRICS)) {
+        db.createObjectStore(STORE_LYRICS, { keyPath: 'baseName' });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function dbPut(db, storeName, data) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(data);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+function dbGetAll(db, storeName) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAll();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
 
 createApp({
   setup() {
@@ -11,6 +52,7 @@ createApp({
     const playMode = ref('sequential'); // 'sequential' | 'random'
     const fileInput = ref(null);
     const lyricsRef = ref(null);
+    const playlistListRef = ref(null);
     const visualizerCanvas = ref(null);
     const folderSupported = ref('showDirectoryPicker' in window);
 
@@ -23,6 +65,7 @@ createApp({
     const playlist = ref([]);
     const lyricsMap = ref({}); // { baseName: parsedLyrics }
     const shuffleOrder = ref([]); // Order for random play
+    let lastStateSaveTime = 0;
 
     // Current song
     const currentSong = computed(() => {
@@ -90,6 +133,104 @@ createApp({
       const m = Math.floor(seconds / 60);
       const s = Math.floor(seconds % 60);
       return `${m}:${s.toString().padStart(2, '0')}`;
+    }
+
+    // Persist playback position to localStorage (lightweight)
+    function savePlaybackState() {
+      try {
+        const state = {
+          baseName: currentSong.value?.baseName || null,
+          time: currentTime.value,
+          playMode: playMode.value
+        };
+        localStorage.setItem('easy-music-state', JSON.stringify(state));
+      } catch (e) { /* ignore */ }
+    }
+
+    function savePlaybackStateThrottled() {
+      const now = Date.now();
+      if (now - lastStateSaveTime < 1000) return;
+      lastStateSaveTime = now;
+      savePlaybackState();
+    }
+
+    // Persist audio files & lyrics to IndexedDB
+    async function saveSongToDB(song) {
+      try {
+        const db = await openDB();
+        await dbPut(db, STORE_SONGS, {
+          baseName: song.baseName,
+          name: song.name,
+          blob: song.file
+        });
+        db.close();
+      } catch (e) { /* ignore */ }
+    }
+
+    async function saveLyricsToDB(baseName, lrcLines) {
+      try {
+        const db = await openDB();
+        await dbPut(db, STORE_LYRICS, { baseName, lines: lrcLines });
+        db.close();
+      } catch (e) { /* ignore */ }
+    }
+
+    // Restore everything from IndexedDB + localStorage on page load
+    async function restoreFromDB() {
+      try {
+        const db = await openDB();
+        const songs = await dbGetAll(db, STORE_SONGS);
+        const lyrics = await dbGetAll(db, STORE_LYRICS);
+        db.close();
+
+        if (!songs.length) return;
+
+        const restoredSongs = songs.map((s) => ({
+          id: `${s.baseName}-${Date.now()}-${Math.random()}`,
+          name: s.name,
+          baseName: s.baseName,
+          artist: '',
+          file: s.blob,
+          cover: null
+        }));
+        restoredSongs.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+        playlist.value = restoredSongs;
+
+        const restoredLyrics = {};
+        for (const l of lyrics) {
+          restoredLyrics[l.baseName] = l.lines;
+        }
+        lyricsMap.value = restoredLyrics;
+
+        shuffleOrder.value = getShuffleOrder();
+
+        // Restore playback position from localStorage
+        const raw = localStorage.getItem('easy-music-state');
+        if (raw) {
+          const last = JSON.parse(raw);
+          if (last.playMode === 'random' || last.playMode === 'sequential') {
+            playMode.value = last.playMode;
+          }
+          if (last.baseName) {
+            const idx = playlist.value.findIndex((s) => s.baseName === last.baseName);
+            if (idx >= 0) {
+              playByIndex(idx);
+              if (typeof last.time === 'number' && last.time > 0 && audioRef.value) {
+                audioRef.value.addEventListener('loadedmetadata', () => {
+                  audioRef.value.currentTime = last.time;
+                  currentTime.value = last.time;
+                  // Pause after seeking so user can manually resume
+                  audioRef.value.pause();
+                  isPlaying.value = false;
+                  stopVisualizer();
+                }, { once: true });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Restore from DB failed:', e);
+      }
     }
 
     // Read LRC file with auto encoding detection (UTF-8 / GBK for Chinese lyrics)
@@ -192,16 +333,45 @@ createApp({
       });
 
       if (newSongs.length) {
-        const startIdx = playlist.value.length;
-        playlist.value.push(...newSongs);
-        Object.assign(lyricsMap.value, lyricsByBase);
+        // Dedupe: keep only one per filename (case-insensitive),
+        // including duplicates within the same import batch
+        const names = new Set(playlist.value.map((s) => s.baseName.toLowerCase()));
+        const toAdd = [];
+        for (const song of newSongs) {
+          const key = song.baseName.toLowerCase();
+          if (names.has(key)) continue;
+          names.add(key);
+          toAdd.push(song);
+        }
 
-        if (currentIndex.value < 0) {
+        const playingId = currentSong.value?.id;
+
+        if (toAdd.length) {
+          toAdd.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+          playlist.value.push(...toAdd);
+          playlist.value.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+          // Save new songs to IndexedDB
+          for (const song of toAdd) {
+            saveSongToDB(song);
+          }
+        }
+
+        Object.assign(lyricsMap.value, lyricsByBase);
+        for (const [baseName, lines] of Object.entries(lyricsByBase)) {
+          saveLyricsToDB(baseName, lines);
+        }
+
+        if (currentIndex.value < 0 && playlist.value.length) {
           currentIndex.value = 0;
           playByIndex(0);
+        } else if (playingId !== undefined && toAdd.length) {
+          const newIdx = playlist.value.findIndex((s) => s.id === playingId);
+          if (newIdx >= 0) currentIndex.value = newIdx;
         }
 
         shuffleOrder.value = getShuffleOrder();
+        savePlaybackState();
       }
     }
 
@@ -361,6 +531,7 @@ createApp({
       });
       audio.addEventListener('timeupdate', () => {
         currentTime.value = audio.currentTime;
+        savePlaybackStateThrottled();
       });
       audio.addEventListener('ended', () => {
         next();
@@ -412,10 +583,27 @@ createApp({
       currentTime.value = time;
     }
 
+    // Restore playlist and playback on page load
+    onMounted(() => {
+      restoreFromDB();
+    });
+
+    // Scroll playlist to current item when currentIndex changes
+    watch(currentIndex, () => {
+      nextTick(() => {
+        const list = playlistListRef.value;
+        const active = list?.querySelector('li.active');
+        if (active) {
+          active.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      });
+    });
+
     // Keep audio ref in DOM for Vue reactivity - use a hidden audio
     return {
       fileInput,
       lyricsRef,
+      playlistListRef,
       visualizerCanvas,
       folderSupported,
       isPlaying,

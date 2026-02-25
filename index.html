@@ -27,7 +27,7 @@
           <span>添加音乐</span>
           <button type="button" class="btn-folder-small" @click.stop="selectFolder">选择文件夹</button>
         </div>
-        <ul class="playlist-list">
+        <ul ref="playlistListRef" class="playlist-list">
           <li
             v-for="(song, index) in playlist"
             :key="song.id"
@@ -53,6 +53,8 @@
 
       <!-- Right: Player -->
       <main class="player-panel">
+      <!-- Current track name -->
+      <div v-if="currentSong" class="now-playing-title">{{ currentSong.name }}</div>
       <!-- Lyrics Area -->
       <div class="lyrics-container" ref="lyricsRef">
         <div class="lyrics-content" :style="{ transform: `translateY(${lyricsOffset}px)` }">

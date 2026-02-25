@@ -355,6 +355,21 @@ body::before {
   color: var(--text-secondary);
 }
 
+/* Current track name (right panel) */
+.now-playing-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 20px;
+  text-align: center;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 560px;
+  width: 100%;
+}
+
 /* Lyrics */
 .lyrics-container {
   width: 100%;
