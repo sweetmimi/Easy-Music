@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>本地音乐播放器</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Audio reactive background canvas -->
+  <canvas id="bg-canvas" class="bg-canvas"></canvas>
+  <div id="app">
+    <input ref="fileInput" type="file" accept=".mp3,.m4a,.ogg,.wav,.lrc" multiple @change="onFileSelect" style="display:none">
+    <div class="app-layout">
+      <!-- Left: Playlist -->
+      <aside v-if="playlist.length" class="playlist-panel">
+        <div class="playlist-header">
+          <h2>播放列表</h2>
+          <span class="playlist-count">{{ playlist.length }} 首</span>
+        </div>
+        <div class="playlist-upload" @click="triggerFileInput" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop.prevent="onDrop">
+          <span class="upload-icon">+</span>
+          <span>添加音乐</span>
+          <button type="button" class="btn-folder-small" @click.stop="selectFolder">选择文件夹</button>
+        </div>
+        <ul class="playlist-list">
+          <li
+            v-for="(song, index) in playlist"
+            :key="song.id"
+            :class="{ active: index === currentIndex }"
+            @click="playByIndex(index)"
+          >
+            <span class="idx">{{ index + 1 }}</span>
+            <span class="song-name">{{ song.name }}</span>
+          </li>
+        </ul>
+      </aside>
+      <aside v-else class="playlist-panel empty">
+        <div class="empty-playlist">
+          <div class="empty-icon">♪</div>
+          <p>暂无歌曲</p>
+          <div class="upload-area-compact" @click="triggerFileInput" @dragover.prevent="onDragOver" @dragleave="onDragLeave" @drop.prevent="onDrop">
+            <button type="button" class="btn-add">添加音乐</button>
+          </div>
+          <button type="button" class="btn-folder-small" @click.stop="selectFolder">或选择文件夹</button>
+          <p v-if="!folderSupported" class="folder-tip">需 Chrome/Edge</p>
+        </div>
+      </aside>
+
+      <!-- Right: Player -->
+      <main class="player-panel">
+      <!-- Header & Cover -->
+      <div class="player-header">
+        <div class="cover-area" :class="{ playing: isPlaying }">
+          <img v-if="currentSong?.cover" :src="currentSong.cover" alt="封面" class="cover-img">
+          <div v-else class="cover-placeholder">
+            <span class="music-icon">♪</span>
+          </div>
+        </div>
+        <div class="song-info">
+          <h2 class="song-title">{{ currentSong?.name || '未选择歌曲' }}</h2>
+          <p class="song-artist">{{ currentSong?.artist || '' }}</p>
+        </div>
+      </div>
+
+      <!-- Lyrics Area -->
+      <div class="lyrics-container" ref="lyricsRef">
+        <div class="lyrics-content" :style="{ transform: `translateY(${lyricsOffset}px)` }">
+          <div
+            v-for="(line, index) in lyricsLines"
+            :key="index"
+            class="lyric-line"
+            :class="{ active: index === currentLyricIndex }"
+          >
+            {{ line.text }}
+          </div>
+          <div v-if="!lyricsLines.length && currentSong" class="lyric-line empty">
+            暂无歌词，可拖入同名的 .lrc 文件
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress Bar -->
+      <div class="progress-bar">
+        <span class="time-current">{{ formatTime(currentTime) }}</span>
+        <div class="progress-track" @click="seekTo">
+          <div class="progress-fill" :style="{ width: progressPercent + '%' }"></div>
+        </div>
+        <span class="time-total">{{ formatTime(duration) }}</span>
+      </div>
+
+      <!-- Audio Visualizer -->
+      <div class="visualizer-wrap">
+        <canvas ref="visualizerCanvas" class="visualizer-canvas"></canvas>
+      </div>
+
+      <!-- Controls -->
+      <div class="controls">
+        <button class="btn-icon" title="上一首" @click="prev">⏮</button>
+        <button class="btn-icon btn-play" @click="togglePlay">
+          {{ isPlaying ? '⏸' : '▶' }}
+        </button>
+        <button class="btn-icon" title="下一首" @click="next">⏭</button>
+        <button
+          class="btn-icon btn-mode"
+          :title="playMode === 'sequential' ? '顺序播放（点击切换随机）' : '随机播放（点击切换顺序）'"
+          @click="togglePlayMode"
+        >
+          {{ playMode === 'sequential' ? '顺序' : '随机' }}
+        </button>
+      </div>
+
+    </main>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
